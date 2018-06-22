@@ -654,6 +654,11 @@ bpy.types.Scene.mblab_random_engine = bpy.props.EnumProperty(
                 default = "LI")
 
 
+bpy.types.Scene.mblab_unreal_export_directory = bpy.props.StringProperty(
+        name="Unreal Export Directory",
+        description="The prefix of names for finalized model, skeleton and materials. If none, it will be generated automatically" ,
+        default="./")
+
 class ButtonParametersOff(bpy.types.Operator):
 
     bl_label = 'Body, face and measure parameters'
@@ -1726,6 +1731,35 @@ class LoadTemplate(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def remove_shapekeys_from_proxyfit_items():
+    bl_region_type = "UI"
+    for object in bpy.data.objects:
+        if (object.type == "MESH"):
+            if (len(list(filter(lambda x : "mbastlab_proxyfit" in x.name, object.data.shape_keys.key_blocks))) > 0):
+                object.select = True
+                bpy.context.scene.objects.active = object
+                def del_shape_key(name):
+                    i = object.data.shape_keys.key_blocks.keys().index(name)
+                    object.active_shape_key_index = i
+                    bpy.ops.object.shape_key_remove()
+                del_shape_key("Basis")
+                del_shape_key("mbastlab_proxyfit")
+
+def correct_scale_and_rotation():
+    bpy.context.scene.unit_settings.system = 'METRIC'
+    bpy.context.scene.unit_settings.scale_length = 0.01
+    k = 100 #scale constant
+    for ob in bpy.data.objects:
+        ob.select = True
+    bpy.ops.transform.resize(value=(k,k,k))
+    bpy.ops.object.transform_apply(scale=True)
+
+def rename_bones():
+    text = bpy.data.texts.load(os.path.join(os.path.dirname(__file__), "bone_rename_script.py"))   # if from disk
+    ctx = bpy.context.copy()
+    ctx['edit_text'] = text
+    bpy.ops.text.run_script(ctx)
+
 class PrepareForUnreal(bpy.types.Operator):
 
     bl_idname = "mbast.prepare_for_unreal"
@@ -1738,56 +1772,52 @@ class PrepareForUnreal(bpy.types.Operator):
     # def invoke(self, context, event):
     #     return context.window_manager.invoke_props_dialog(self)
 
-    def remove_shapekeys_from_proxyfit_items(self):
-        bl_region_type = "UI"
+    def execute(self, context):
+        self.report({'INFO'}, "Complete")
+        global mblab_humanoid
+        global gui_status
+
+        bpy.context.area.spaces[0].pivot_point='CURSOR'
+        bpy.context.area.spaces[0].cursor_location = (0.0, 0.0, 0.0)
+        if (bpy.ops.object.mode != 'OBJECT'):
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        remove_shapekeys_from_proxyfit_items()
+
+        rename_bones()
+
+        correct_scale_and_rotation()
+
+        # self.export_individual_fbx_files()
+
+        return {'FINISHED'}
+
+
+class ExportAllForUnreal(bpy.types.Operator):
+
+    bl_idname = "mbast.export_all_for_unreal"
+    bl_label = "Export All to Unreal Engine"
+
+    def export_individual_fbx_files(self):
         for object in bpy.data.objects:
-            if (object.type == "MESH"):
-                if (len(list(filter(lambda x : "mbastlab_proxyfit" in x.name, object.data.shape_keys.key_blocks))) > 0):
-                    object.select = True
-                    bpy.context.scene.objects.active = object
-                    def del_shape_key(name):
-                        i = object.data.shape_keys.key_blocks.keys().index(name)
-                        object.active_shape_key_index = i
-                        bpy.ops.object.shape_key_remove()
-                    del_shape_key("Basis")
-                    del_shape_key("mbastlab_proxyfit")
-
-    def correct_scale_and_rotation(self):
-        bpy.context.scene.unit_settings.system = 'METRIC'
-        bpy.context.scene.unit_settings.scale_length = 0.01
-        k = 100 #scale constant
-        for ob in bpy.data.objects:
-            ob.select = True
-
-        bpy.ops.transform.resize(value=(k,k,k))
-        bpy.ops.object.transform_apply(scale=True)
-
-    def rename_bones(self):
-        text = bpy.data.texts.load(os.path.join(os.path.dirname(__file__), "bone_rename_script.py"))   # if from disk
-        ctx = bpy.context.copy()
-        ctx['edit_text'] = text
-        bpy.ops.text.run_script(ctx)
-
-    # def export_individual_fbx_files(self):
-    #     for object in bpy.data.objects:
-    #         bpy.ops.object.select_all(action='DESELECT')
-    #         object.select = True
-    #         if (object.find_armature() != None):
-    #             object.find_armature().select = True
-    #         export_name = object.name
-    #         if ("MBlab_bd" in object.name):
-    #             export_name = self.filepath + export_name
-    #         fn = os.path.join(export_name)
-    #         print("exporting",object.name)
-    #         print({o.name : o.select for o in bpy.data.objects})
-    #         bpy.ops.export_scene.fbx(filepath=fn + ".fbx", check_existing=True, axis_up='Y', axis_forward='-Z', filter_glob="*.fbx", 
-    #             version='BIN7400', use_selection=True, global_scale=1.0, bake_space_transform=False, object_types={'MESH', 'ARMATURE'}, 
-    #             use_mesh_modifiers=False, mesh_smooth_type='OFF', use_mesh_edges=False, use_tspace=False, use_custom_props=False, 
-    #             add_leaf_bones=False, primary_bone_axis='Y', secondary_bone_axis='X', use_armature_deform_only=False, 
-    #             bake_anim=True, bake_anim_use_all_bones=True, bake_anim_use_nla_strips=True, bake_anim_use_all_actions=True, 
-    #             bake_anim_step=1.0, bake_anim_simplify_factor=1.0, use_anim=True, use_anim_action_all=True, use_default_take=True, 
-    #             use_anim_optimize=True, anim_optimize_precision=6.0, path_mode='AUTO', embed_textures=False, batch_mode='OFF', 
-    #             use_batch_own_dir=True , use_metadata=True)
+            bpy.ops.object.select_all(action='DESELECT')
+            object.select = True
+            if (object.find_armature() != None):
+                object.find_armature().select = True
+            export_name = object.name
+            if ("MBlab_bd" in object.name):
+                export_name = bpy.context.scene.mblab_unreal_export_directory + "/" + export_name
+            fn = os.path.join(export_name)
+            print("exporting",object.name)
+            print({o.name : o.select for o in bpy.data.objects})
+            bpy.ops.export_scene.fbx(filepath=fn + ".fbx", check_existing=True, axis_up='Y', axis_forward='-Z', filter_glob="*.fbx", 
+                version='BIN7400', use_selection=True, global_scale=1.0, bake_space_transform=False, object_types={'MESH', 'ARMATURE'}, 
+                use_mesh_modifiers=False, mesh_smooth_type='OFF', use_mesh_edges=False, use_tspace=False, use_custom_props=False, 
+                add_leaf_bones=False, primary_bone_axis='Y', secondary_bone_axis='X', use_armature_deform_only=False, 
+                bake_anim=True, bake_anim_use_all_bones=True, bake_anim_use_nla_strips=True, bake_anim_use_all_actions=True, 
+                bake_anim_step=1.0, bake_anim_simplify_factor=1.0, use_anim=True, use_anim_action_all=True, use_default_take=True, 
+                use_anim_optimize=True, anim_optimize_precision=6.0, path_mode='AUTO', embed_textures=False, batch_mode='OFF', 
+                use_batch_own_dir=True , use_metadata=True)
 
     def execute(self, context):
         self.report({'INFO'}, "Complete")
@@ -1799,13 +1829,13 @@ class PrepareForUnreal(bpy.types.Operator):
         if (bpy.ops.object.mode != 'OBJECT'):
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        self.remove_shapekeys_from_proxyfit_items()
+        remove_shapekeys_from_proxyfit_items()
 
-        self.rename_bones()
+        rename_bones()
 
-        self.correct_scale_and_rotation()
+        correct_scale_and_rotation()
 
-        # self.export_individual_fbx_files()
+        self.export_individual_fbx_files()
 
         return {'FINISHED'}
 
@@ -1987,8 +2017,10 @@ class VIEW3D_PT_tools_ManuelbastioniLAB(bpy.types.Panel):
                     box.label(mblab_retarget.is_animated_bone)
 
                 box = self.layout.box()
-                box.label("Export for Unreal Engine")
+                box.label("Unreal Engine Utilities")
                 box.operator('mbast.prepare_for_unreal')
+                box.prop(scn,'mblab_unreal_export_directory')
+                box.operator('mbast.export_all_for_unreal')
 
 
         if gui_status == "ACTIVE_SESSION":
